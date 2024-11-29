@@ -30,6 +30,8 @@ struct shm_queue {
     char data[QUEUE_SIZE * MSG_SIZE];
 };
 
+struct shm_queue pte_clean_quene;
+
 static struct {
     struct cdev cdev;
     dev_t dev_num;
@@ -89,7 +91,8 @@ static int __init shmqueue_init(void)
         return ret;
     }
 
-    shmqueue_dev.queue = kmalloc(sizeof(struct shm_queue), GFP_KERNEL);
+    //shmqueue_dev.queue = kmalloc(sizeof(struct shm_queue), GFP_KERNEL);
+    shmqueue_dev.queue = pte_clean_quene;
     if (!shmqueue_dev.queue) {
         cdev_del(&shmqueue_dev.cdev);
         device_destroy(shmqueue_dev.device_class, shmqueue_dev.dev_num);
@@ -106,7 +109,7 @@ static int __init shmqueue_init(void)
 
 static void __exit shmqueue_exit(void)
 {
-    kfree(shmqueue_dev.queue);
+    //kfree(shmqueue_dev.queue);
     cdev_del(&shmqueue_dev.cdev);
     device_destroy(shmqueue_dev.device_class, shmqueue_dev.dev_num);
     class_destroy(shmqueue_dev.device_class);
