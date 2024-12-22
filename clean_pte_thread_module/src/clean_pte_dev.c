@@ -16,6 +16,9 @@
 #include <linux/mempolicy.h>  
 #include <linux/kthread.h>
 #include <linux/sched.h>
+#include <linux/mm_types.h>
+#include <linux/pgtable.h>
+#include <asm/tlbflush.h>
 
 #define DEVICE_NAME "shm_dev"
 #define CLASS_NAME "shmqueue_class"
@@ -39,7 +42,6 @@ static struct {
     struct device *device;
     struct shm_queue *queue;
 } shmqueue_dev;
-
 
 wait_queue_head_t clean_quene;
 
@@ -71,8 +73,11 @@ static void clear_pte_by_address(struct mm_struct *mm, unsigned long address)
     
     // 4. 检查PTE是否有效
     if (pte_present(*ptep)) {
-        // 5. 使用ptep_clear_flush_notify清空页表项
-        ptep_clear_flush_notify(vma, address, ptep);
+            // 使用 ptep_get_and_clear 清除页表项
+            pte_t old_pte = ptep_get_and_clear(vma->vm_mm, address, ptep);
+             // 刷新 TLB
+           //flush_tlb_page(vma, address);
+           __flush_tlb_all();
     }
     
     // 6. 按照获取的相反顺序释放锁
@@ -80,15 +85,14 @@ static void clear_pte_by_address(struct mm_struct *mm, unsigned long address)
     mmap_read_unlock(mm);         // 释放mmap锁
 }
 
-static int clean_pte()
+static int clean_pte(void *data)
 {
-        while (!kthread_should_stop()) {
+    while (!kthread_should_stop()) { 
         wait_event_interruptible(clean_quene, (pte_clean_quene.read_pos != pte_clean_quene.write_pos));
         struct mm_struct *mm = current -> mm;
-        unsigned long address = pte_clean_quene[read_pos];
+        unsigned long address = pte_clean_quene.address[pte_clean_quene.read_pos];
         clear_pte_by_address(mm, address);
         pte_clean_quene.read_pos ++;
-
     }
 
     return 0;
@@ -146,7 +150,10 @@ static int __init shmqueue_init(void)
     }
 
     //shmqueue_dev.queue = kmalloc(sizeof(struct shm_queue), GFP_KERNEL);
-    shmqueue_dev.queue = pte_clean_quene;
+    pte_clean_quene.read_pos=0;
+    pte_clean_quene.write_pos=0;
+    shmqueue_dev.queue = &pte_clean_quene;
+
 
     if (!shmqueue_dev.queue) {
         cdev_del(&shmqueue_dev.cdev);
@@ -158,11 +165,14 @@ static int __init shmqueue_init(void)
 
     memset(shmqueue_dev.queue, 0, sizeof(struct shm_queue));
 
-    printk(KERN_INFO "SHM Queue module initialized\n");
+    //DECLARE_WAIT_QUEUE_HEAD(clean_quene);
+    init_waitqueue_head(&clean_quene);
 
-    DECLARE_WAIT_QUEUE_HEAD(clean_quene);
-    
     struct task_struct *clean_pte_thread = kthread_run(clean_pte, NULL, "clean_pte_thread");
+
+    printk(KERN_INFO "SHM Queue module initialized\n");
+    
+    //struct task_struct *clean_pte_thread = kthread_run(clean_pte, NULL, "clean_pte_thread");
 
     return 0;
 }
