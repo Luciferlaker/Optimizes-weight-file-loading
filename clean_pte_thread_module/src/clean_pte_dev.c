@@ -19,6 +19,7 @@
 #include <linux/mm_types.h>
 #include <linux/pgtable.h>
 #include <asm/tlbflush.h>
+#include <linux/delay.h>
 
 #define DEVICE_NAME "shm_dev"
 #define CLASS_NAME "shmqueue_class"
@@ -88,11 +89,16 @@ static void clear_pte_by_address(struct mm_struct *mm, unsigned long address)
 static int clean_pte(void *data)
 {
     while (!kthread_should_stop()) { 
-        wait_event_interruptible(clean_quene, (pte_clean_quene.read_pos != pte_clean_quene.write_pos));
-        struct mm_struct *mm = current -> mm;
+        printk("pte_clean_quene.read_pos = %d\n",pte_clean_quene.read_pos);
+        printk("pte_clean_quene.write_pos = %d\n",pte_clean_quene.write_pos);
+        //wait_event_interruptible(clean_quene, (pte_clean_quene.read_pos != pte_clean_quene.write_pos));
+        //printk("pte_clean_quene.read_pos = %d\n",pte_clean_quene.read_pos);
+        //printk("pte_clean_quene.write_pos = %d\n",pte_clean_quene.write_pos);
+       /* struct mm_struct *mm = current -> mm;
         unsigned long address = pte_clean_quene.address[pte_clean_quene.read_pos];
         clear_pte_by_address(mm, address);
-        pte_clean_quene.read_pos ++;
+        pte_clean_quene.read_pos ++;*/
+        msleep(100);
     }
 
     return 0;
@@ -154,6 +160,9 @@ static int __init shmqueue_init(void)
     pte_clean_quene.write_pos=0;
     shmqueue_dev.queue = &pte_clean_quene;
 
+        // 打印共享内存的虚拟地址和物理地址
+    pr_info("Shared memory virtual address: %p\n", &pte_clean_quene);
+    pr_info("Shared memory physical address: 0x%lx\n", (unsigned long)virt_to_phys(&pte_clean_quene));
 
     if (!shmqueue_dev.queue) {
         cdev_del(&shmqueue_dev.cdev);
