@@ -1,87 +1,93 @@
+#include <fcntl.h>  
+#include <unistd.h>  
+#include <sys/mman.h>  
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <errno.h>
-
+#include<errno.h>
+  
 #define QUEUE_SIZE 1024
 #define MSG_SIZE 256
 
+#define Wake_up_Sign 1234
+#define FILE_NAME "Makefile"
+#define DEVICE_FILENAME "/dev/shm_dev" 
+#define FILE_SIZE 64780  // 50MB in bytes 
+
+// 共享内存队列结构
 struct shm_queue {
     unsigned int read_pos;
     unsigned int write_pos;
     unsigned int count;
-    unsigned long address[QUEUE_SIZE * MSG_SIZE];
+    int pid;
+    unsigned long data[QUEUE_SIZE * MSG_SIZE];
 };
+ 
+  
+int main()  
+{  
+    int fd;  
+    int ret;
+    struct shm_queue *p = NULL;
+  
+    // Get the current process ID
+    pid_t pid = getpid();
 
-// 入队 写入信息
-static int enqueue(struct shm_queue *queue, unsigned long *msg)
-{
-    if (queue->count >= QUEUE_SIZE) {
-        return -1; 
-    }
-    queue->address[queue->write_pos]=msg;
-    queue->write_pos = (queue->write_pos + 1) % QUEUE_SIZE;
-    queue->count++;
-    return 0;
-}
+    // Print the process ID
+    printf("Current process PID: %d\n", pid);
 
-// 出队 读取信息
-static int dequeue(struct shm_queue *queue, unsigned long *msg)
-{
-    if (queue->count == 0) {
-        return -1;
-    }
-
-    msg = queue->address[queue->read_pos];
-    queue->read_pos = (queue->read_pos + 1) % QUEUE_SIZE;
-    queue->count--;
-    return 0;
-}
-
-int main()
-{
-    int fd;
-    struct shm_queue *queue;
-    char message[MSG_SIZE];
-
-    // 打开设备文件
-    fd = open("/dev/shm_dev", O_RDWR);
-    if (fd < 0) {
-        perror("Failed to open device");
-        return -1;
+    fd = open(DEVICE_FILENAME, O_RDWR|O_NDELAY);  
+  
+    if(fd >= 0) {
+        p = (struct shm_queue *)mmap(0,  
+                sizeof(struct shm_queue),  
+                PROT_READ | PROT_WRITE,  
+                MAP_SHARED,  
+                fd,  
+                0);  
+        printf("p->read_pos = %d\n", p->read_pos);
+        printf("p->write_pos = %d\n", p->write_pos); 
     }
 
-    // 映射共享内存
-    queue = mmap(NULL, sizeof(struct shm_queue), PROT_READ | PROT_WRITE,
-                MAP_SHARED, fd, 0);
-    if (queue == MAP_FAILED) {
+    int file_fd;
+    void *mapped_memory;
+    
+    // Open the file
+    file_fd = open(FILE_NAME, O_RDONLY);
+    if (file_fd == -1) {
+        perror("Failed to open the file");
+        return 1;
+    }
+
+
+    // Map the file into memory (read-only mapping)
+    mapped_memory = mmap(NULL,FILE_SIZE, PROT_READ, MAP_PRIVATE, file_fd, 0);
+    if (mapped_memory == MAP_FAILED) {
         perror("mmap failed");
-        close(fd);
-        return -1;
+        close(file_fd);
+        return 1;
     }
-    printf("File mapped to virtual memory address: %p\n", queue);
+     // 打印文件内容
+    printf("%.*s\n",4096, mapped_memory);  // 使用 %.*s 打印指定大小的字符串
+    // Print the initial address of the mapped memory
+    printf("Mapped memory address: %lu\n", (unsigned long)mapped_memory);
 
-    //写入消息
-    unsigned long address = 111111;
-    if (enqueue(queue, address) == 0) {
-        printf("Message enqueued: %ld\n", address);
-    } else {
-        printf("Queue is full\n");
+
+    p->pid = pid ;
+    for(int i = 0;i < 16;i ++)
+    {
+        p->data[i] = (unsigned long)mapped_memory + i * 4096;
+            p->write_pos ++;
     }
+    
+    ioctl(fd,Wake_up_Sign);
+    printf("p->read_pos = %d\n", p->read_pos);
+    printf("p->write_pos = %d\n", p->write_pos);
 
-    // 读取消息
-    if (dequeue(queue, address) == 0) {
-        printf("Message dequeued: %ld\n", address);
-    } else {
-        printf("Queue is empty\n");
+    while(1)
+    {
+        int a =0;
+        a++;
     }
+    return ret;  
 
-    munmap(queue, sizeof(struct shm_queue));
-    close(fd);
-    return 0;
-}
+}  
