@@ -66,6 +66,15 @@ int main()
         close(file_fd);
         return 1;
     }
+
+    // 使用 madvise 来告诉内核这是随机访问
+    if (madvise(mapped_memory, FILE_SIZE, MADV_RANDOM) != 0) {
+        perror("madvise failed");
+        munmap(mapped_memory, FILE_SIZE);
+        close(file_fd);
+        return 1;
+    }
+
      // 打印文件内容
     printf("%.*s\n",40960,mapped_memory);  // 使用 %.*s 打印指定大小的字符串
     // Print the initial address of the mapped memory
@@ -85,7 +94,7 @@ int main()
 
     sleep(2);
 
-    printf("%.*s\n",40960 ,mapped_memory);  // 使用 %.*s 打印指定大小的字符串
+    //printf("%.*s\n",40960 ,mapped_memory);  // 使用 %.*s 打印指定大小的字符串
     return ret;  
 
 }  

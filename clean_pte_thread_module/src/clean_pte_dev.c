@@ -21,6 +21,8 @@
 #include <linux/pgtable.h>
 #include <asm/tlbflush.h>
 #include <linux/delay.h>
+#include <linux/ktime.h>  // For ktime_get()
+#include <linux/timekeeping.h>  // For timekeeping functions
 
 #define DEVICE_NAME "shm_dev"
 #define CLASS_NAME "shmqueue_class"
@@ -64,10 +66,10 @@ static void clear_pte_by_address(struct mm_struct *mm, unsigned long address)
     vma = find_vma(mm, address);
     if (!vma || address < vma->vm_start) {
         mmap_read_unlock(mm);
-        printk("no find mmap address \n");
+        //printk("no find mmap address \n");
         return;  // 地址不在任何VMA范围内
     }
-    printk("find mmap address \n");
+    //printk("find mmap address \n");
     // 3. 通过地址获取对应的页表项指针
     // 注意：这里使用pte_offset_map_lock而不是普通的pte_offset_map
     // 因为我们需要同时获取pte和对应的spinlock
@@ -77,18 +79,21 @@ static void clear_pte_by_address(struct mm_struct *mm, unsigned long address)
         mmap_read_unlock(mm);
         return;  // 页表项不存在
     }
-    printk("find pte valind");
+    //printk("find pte valind");
     // 4. 检查PTE是否有效
     if (pte_present(*ptep)) {
-            printk("clean the pte\n");
+            //printk("clean the pte\n");
             // 使用 ptep_get_and_clear 清除页表项
             pte_t old_pte = ptep_get_and_clear(vma->vm_mm, address, ptep);
-            printk("Old pte: %lx\n", old_pte);  // 打印原始页表项
-            printk("New pte: %lx\n", *ptep);   // 打印清空后的页表项，应该是0或无效状态
+           // printk("Old pte: %lx\n", old_pte);  // 打印原始页表项
+           //printk("New pte: %lx\n", *ptep);   // 打印清空后的页表项，应该是0或无效状态
              // 刷新 TLB
            //flush_tlb_page(vma, address);
            __flush_tlb_all();
     }
+    // if (!pte_present(*ptep)) {
+    //         printk("pte is none\n");
+    // }
     
     // 6. 按照获取的相反顺序释放锁
     pte_unmap_unlock(ptep, ptl);  // 释放页表锁并解除映射
@@ -122,7 +127,19 @@ static int clean_pte(void *data)
         }
         struct mm_struct *mm = task -> mm;
         unsigned long address = sh_mem->address[sh_mem->read_pos];
+
+        // Measure time taken by clear_pte_by_address
+        ktime_t start_time, end_time;
+        s64 duration_ns;
+
+        start_time = ktime_get();  // Record start time
         clear_pte_by_address(mm, address);
+        end_time = ktime_get();    // Record end time
+
+        duration_ns = ktime_to_ns(ktime_sub(end_time, start_time));  // Calculate duration in nanoseconds
+
+        printk(KERN_INFO "Time taken by clear_pte_by_address: %lld ns\n", duration_ns);
+
         sh_mem->read_pos ++;
     }
 
