@@ -1,0 +1,1 @@
+cmd_/home/zzb/Load/true_test/src/Module.symvers := sed 's/\.ko$$/\.o/' /home/zzb/Load/true_test/src/modules.order | scripts/mod/modpost -m -a  -o /home/zzb/Load/true_test/src/Module.symvers -e -i Module.symvers   -T -

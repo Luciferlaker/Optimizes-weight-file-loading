@@ -11,10 +11,10 @@
 #define DEVICE_FILENAME "/dev/shm_dev" 
 #define FILE_SIZE 38543  // 50MB in bytes 
 
-#define Zero_QUEUE_SIZE 1024
+#define Zero_QUEUE_SIZE 40960
 #define Zero_MSG_SIZE 1
 
-#define Clean_QUEUE_SIZE 1024
+#define Clean_QUEUE_SIZE 40960
 #define Clean_MSG_SIZE 1
 
 #define START_CLEAN_PTE 7890

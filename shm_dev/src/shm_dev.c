@@ -23,19 +23,21 @@
 #include <linux/delay.h>
 #include <linux/ktime.h>  // For ktime_get()
 #include <linux/timekeeping.h>  // For timekeeping functions
+#include <linux/completion.h>
 
 #define DEVICE_NAME "shm_dev"
 #define CLASS_NAME "shmqueue_class"
+
 
 static struct class*  class;
 static struct device*  device;
 static int major;
 
 
-#define Zero_QUEUE_SIZE 1024
+#define Zero_QUEUE_SIZE 40960
 #define Zero_MSG_SIZE 1
 
-#define Clean_QUEUE_SIZE 1024
+#define Clean_QUEUE_SIZE 40960
 #define Clean_MSG_SIZE 1
 
 #define START_CLEAN_PTE 7890
@@ -46,6 +48,8 @@ static DEFINE_MUTEX(shm_mutex);
 wait_queue_head_t clean_quene;
 
 wait_queue_head_t zero_quene;
+
+static struct completion comp;                 // 完成变量
 
 // zero_page
 struct zero_page_queue {
@@ -91,7 +95,7 @@ static void clear_pte_by_address(struct mm_struct *mm, unsigned long address)
         printk("no find mmap address \n");
         return;  // 地址不在任何VMA范围内
     }
-    printk("find mmap address \n");
+    //printk("find mmap address \n");
     // 3. 通过地址获取对应的页表项指针
     ptep = pte_offset_map_lock(mm, pmd_offset(pud_offset(p4d_offset(pgd_offset(mm, address), 
               address), address), address), address, &ptl);
@@ -102,7 +106,7 @@ static void clear_pte_by_address(struct mm_struct *mm, unsigned long address)
     //printk("find pte valind");
     // 4. 检查PTE是否有效
     if (pte_present(*ptep)) {
-            printk("clean the pte\n");
+            //printk("clean the pte\n");
             // 使用 ptep_get_and_clear 清除页表项
             pte_t old_pte = ptep_get_and_clear(vma->vm_mm, address, ptep);
            // printk("Old pte: %lx\n", old_pte);  // 打印原始页表项
@@ -112,7 +116,7 @@ static void clear_pte_by_address(struct mm_struct *mm, unsigned long address)
            __flush_tlb_all();
     }
     if (!pte_present(*ptep)) {
-             printk("pte is none\n");
+             //printk("pte is none\n");
      }
     
     // 6. 按照获取的相反顺序释放锁
@@ -123,12 +127,12 @@ static void clear_pte_by_address(struct mm_struct *mm, unsigned long address)
 static int clean_pte(void *data)
 {
     while (!kthread_should_stop()) {
-        printk("read_pos = %d \n",sh_mem->clean_pte_quene.read_pos);
-        printk("write_pos = %d \n",sh_mem->clean_pte_quene.write_pos);
+        //printk("read_pos = %d \n",sh_mem->clean_pte_quene.read_pos);
+        //printk("write_pos = %d \n",sh_mem->clean_pte_quene.write_pos);
         wait_event_interruptible(clean_quene, (sh_mem->clean_pte_quene.write_pos!= sh_mem->clean_pte_quene.read_pos));
-        printk("pte_clean_quene.address = %lu\n",sh_mem->clean_pte_quene.address[sh_mem->clean_pte_quene.read_pos]);
-        printk("current->pid = %d \n",current->pid);
-        printk("shm->pid = %d \n",sh_mem->clean_pte_quene.pid);
+        //printk("pte_clean_quene.address = %lu\n",sh_mem->clean_pte_quene.address[sh_mem->clean_pte_quene.read_pos]);
+        //printk("current->pid = %d \n",current->pid);
+        //printk("shm->pid = %d \n",sh_mem->clean_pte_quene.pid);
 
         struct pid *pid_struct;
         struct task_struct *task;
@@ -141,9 +145,9 @@ static int clean_pte(void *data)
 
         // 判断是否找到
         if (task != NULL) {
-            printk(KERN_INFO "Found task with PID %d, name: %s\n", sh_mem->clean_pte_quene.pid, task->comm);
+            //printk(KERN_INFO "Found task with PID %d, name: %s\n", sh_mem->clean_pte_quene.pid, task->comm);
         } else {
-            printk(KERN_INFO "No task found with PID %d\n", sh_mem->clean_pte_quene.pid);
+            //printk(KERN_INFO "No task found with PID %d\n", sh_mem->clean_pte_quene.pid);
         }
         struct mm_struct *mm = task -> mm;
         unsigned long address = sh_mem->clean_pte_quene.address[sh_mem->clean_pte_quene.read_pos];
@@ -161,6 +165,10 @@ static int clean_pte(void *data)
         //printk(KERN_INFO "Time taken by clear_pte_by_address: %lld ns\n", duration_ns);
 
         sh_mem->clean_pte_quene.read_pos ++;
+        if(sh_mem->clean_pte_quene.write_pos == sh_mem->clean_pte_quene.read_pos)
+        {
+            complete(&comp);
+        }
     }
 
     return 0;
@@ -186,14 +194,14 @@ int handle_zero_page(struct mm_struct *mm, unsigned long address)
     /* Find the VMA for the given address */
     struct vm_area_struct *vma = find_vma(mm, address);
     if (unlikely(!vma)) {
-        printk(KERN_ERR "Cannot find VMA for address 0x%lx\n", address);
+        //printk(KERN_ERR "Cannot find VMA for address 0x%lx\n", address);
         mmap_read_unlock(mm);
         return VM_FAULT_SIGSEGV;
     }
 
     /* Check if the VMA allows the required operation */
     if (!(vma->vm_flags & (VM_READ | VM_WRITE))) {
-        printk(KERN_ERR "VMA at address 0x%lx does not support required permissions\n", address);
+        //printk(KERN_ERR "VMA at address 0x%lx does not support required permissions\n", address);
         mmap_read_unlock(mm);
         return VM_FAULT_SIGSEGV;
     }
@@ -202,12 +210,12 @@ int handle_zero_page(struct mm_struct *mm, unsigned long address)
     pgd = pgd_offset(mm, address);
 
     if (!pgd || pgd_none(*pgd)) {
-        printk(KERN_INFO "Address 0x%lx does not have a valid PGD\n", address);
+        //printk(KERN_INFO "Address 0x%lx does not have a valid PGD\n", address);
     }
 
     p4d = p4d_offset(pgd,address);
     if (p4d && !p4d_none(*p4d)) {
-        printk(KERN_INFO "Address 0x%lx already has a valid P4D\n", address);
+        //printk(KERN_INFO "Address 0x%lx already has a valid P4D\n", address);
     } else {
         p4d = p4d_alloc(mm, pgd, address);
         if (!p4d) {
@@ -218,7 +226,7 @@ int handle_zero_page(struct mm_struct *mm, unsigned long address)
 
     pud = pud_offset(p4d,address);
     if (pud && !pud_none(*pud)) {
-        printk(KERN_INFO "Address 0x%lx already has a valid PUD\n", address);
+        //printk(KERN_INFO "Address 0x%lx already has a valid PUD\n", address);
     } else {
         pud = pud_alloc(mm, p4d, address);
         if (!pud) {
@@ -229,7 +237,7 @@ int handle_zero_page(struct mm_struct *mm, unsigned long address)
 
     pmd = pmd_offset(pud, address);
     if (pmd && !pmd_none(*pmd)) {
-        printk(KERN_INFO "Address 0x%lx already has a valid PMD\n", address);
+        //printk(KERN_INFO "Address 0x%lx already has a valid PMD\n", address);
     } else {
         pmd = pmd_alloc(mm, pud, address);
         if (!pmd) {
@@ -242,10 +250,11 @@ int handle_zero_page(struct mm_struct *mm, unsigned long address)
     /* Check if the address already has a PTE */
     pte = pte_offset_map(pmd, address);
     if (pte && !pte_none(*pte)) {
-        printk(KERN_INFO "Address 0x%lx already has a valid PTE\n", address);
-        pte_unmap(pte);
-        mmap_read_unlock(mm);
-        return 0;
+        //printk(KERN_INFO "Address 0x%lx already has a valid PTE\n", address);
+        ptep_get_and_clear(vma->vm_mm, address, pte);
+        // pte_unmap(pte);
+        // mmap_read_unlock(mm);
+        // return 0;
     }
 
     if (pte_alloc(mm, pmd)) {
@@ -271,7 +280,7 @@ int handle_zero_page(struct mm_struct *mm, unsigned long address)
     update_mmu_tlb(vma, address, pte);
 
     ret = 0;
-    printk(KERN_INFO "handle zero page successful");
+    //printk(KERN_INFO "handle zero page successful");
 
 unlock_pte:
     pte_unmap_unlock(pte, ptl);
@@ -284,12 +293,12 @@ out_unlock:
 static int zero_page(void *data)
 {
     while (!kthread_should_stop()) {
-        printk("read_pos = %d \n",sh_mem->zero_pgae_quene.read_pos);
-        printk("read_pos = %d \n",sh_mem->zero_pgae_quene.write_pos);
+        //printk("read_pos = %d \n",sh_mem->zero_pgae_quene.read_pos);
+        //printk("read_pos = %d \n",sh_mem->zero_pgae_quene.write_pos);
         wait_event_interruptible(zero_quene, (sh_mem->zero_pgae_quene.write_pos!= sh_mem->zero_pgae_quene.read_pos));
-        printk("pte_clean_quene.address = %lu\n",sh_mem->zero_pgae_quene.address[sh_mem->zero_pgae_quene.read_pos]);
-        printk("current->pid = %d \n",current->pid);
-        printk("shm->pid = %d \n",sh_mem->zero_pgae_quene.pid);
+       //printk("pte_clean_quene.address = %lu\n",sh_mem->zero_pgae_quene.address[sh_mem->zero_pgae_quene.read_pos]);
+        //printk("current->pid = %d \n",current->pid);
+        //printk("shm->pid = %d \n",sh_mem->zero_pgae_quene.pid);
 
         struct pid *pid_struct;
         struct task_struct *task;
@@ -302,14 +311,18 @@ static int zero_page(void *data)
 
         // 判断是否找到
         if (task != NULL) {
-            printk(KERN_INFO "Found task with PID %d, name: %s\n", sh_mem->zero_pgae_quene.pid, task->comm);
+            //printk(KERN_INFO "Found task with PID %d, name: %s\n", sh_mem->zero_pgae_quene.pid, task->comm);
         } else {
-            printk(KERN_INFO "No task found with PID %d\n", sh_mem->zero_pgae_quene.pid);
+            //printk(KERN_INFO "No task found with PID %d\n", sh_mem->zero_pgae_quene.pid);
         }
         struct mm_struct *mm = task -> mm;
         unsigned long address = sh_mem->zero_pgae_quene.address[sh_mem->zero_pgae_quene.read_pos];
         handle_zero_page(mm, address);
         sh_mem->zero_pgae_quene.read_pos ++;
+        if(sh_mem->zero_pgae_quene.write_pos!= sh_mem->zero_pgae_quene.read_pos)
+        {
+            complete(&comp);
+        }
     }
 
     return 0;
@@ -399,8 +412,8 @@ out:
 
 long shm_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 {
-    printk("entry ioctl\n");
-    printk("cmd = %d \n",cmd);
+    //printk("entry ioctl\n");
+    //printk("cmd = %d \n",cmd);
 
     // switch(cmd){
     //     case START_CLEAN_PTE:
@@ -415,13 +428,20 @@ long shm_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
     //         printk("invaild message\n");
     // }
     if (cmd == START_CLEAN_PTE) {
-        printk(KERN_INFO "Waking up clean_quene\n");
+        //printk(KERN_INFO "Waking up clean_quene\n");
         wake_up_interruptible(&clean_quene);
+        wait_for_completion(&comp);
+        //printk("read_pos = %d \n",sh_mem->clean_pte_quene.read_pos);
+        //printk("read_pos = %d \n",sh_mem->clean_pte_quene.write_pos);
+
     } else if (cmd == START_ZERO_PAGE) {
-        printk(KERN_INFO "Waking up zero_quene\n");
+        //printk(KERN_INFO "Waking up zero_quene\n");
         wake_up_interruptible(&zero_quene);
+        wait_for_completion(&comp);
+        //printk("read_pos = %d \n",sh_mem->zero_pgae_quene.read_pos);
+        //printk("read_pos = %d \n",sh_mem->zero_pgae_quene.write_pos);
     } else {
-        printk(KERN_ERR "Invalid message: cmd = %d\n", cmd);
+        //printk(KERN_ERR "Invalid message: cmd = %d\n", cmd);
     }
     
 	return 0;
@@ -467,12 +487,15 @@ static int __init shm_init(void)
 
 
     /* init this mmap area */
-    sh_mem = kmalloc(sizeof(struct shm_area), GFP_KERNEL); 
+    sh_mem = kmalloc(sizeof(struct shm_area), GFP_KERNEL);
     //sh_mem = &shm_quene;
     if (sh_mem == NULL) {
         ret = -ENOMEM; 
         goto out;
     }
+
+    // 初始化 completion 变量
+    init_completion(&comp);
     mutex_init(&shm_mutex);
 
     init_waitqueue_head(&clean_quene);
